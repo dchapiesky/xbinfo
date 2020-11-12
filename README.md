@@ -15,7 +15,7 @@ See [xbstrap](https://github.com/managarm/xbstrap)
 xbinfo is available from github
 
 ```
-pip3 install xbinfo git+https://github.com/dchapiesky/xbinfo
+pip3 install git+https://github.com/dchapiesky/xbinfo
 ```
 
 or you may download the repo into a directory and run
