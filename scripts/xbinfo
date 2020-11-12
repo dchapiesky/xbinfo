@@ -1,0 +1,218 @@
+#!/usr/bin/python3
+# SPDX-License-Identifier: MIT
+
+import argparse
+import os
+import sys
+import urllib.parse
+import urllib.request
+import tarfile
+
+import colorama
+import xbstrap.base
+import xbstrap.cli_utils
+
+import pydot
+
+# ---------------------------------------------------------------------------------------
+# Command line parsing.
+# ---------------------------------------------------------------------------------------
+
+main_parser = argparse.ArgumentParser()
+main_subparsers = main_parser.add_subparsers(dest='command')
+
+
+
+
+def do_full_pkg_dep_graph(args):
+	cfg = xbstrap.base.config_for_dir()
+	plan = xbstrap.base.Plan(cfg)
+	
+	# directed graph....
+	#
+	net = pydot.Dot(graph_type='digraph')
+	
+	
+	# make all the nodes... append package_ to each node name
+	#
+	for pkg in cfg.all_pkgs():
+		nodename = "package_" + pkg.name	
+
+		node = pydot.Node(nodename, label=pkg.name, group="package", shape="ellipse", style="filled", fillcolor="yellow")		
+		net.add_node(node)
+
+	
+	# make edges...
+	#	
+	for pkg in cfg.all_pkgs():
+	
+		nodename = "package_" + pkg.name
+
+		# for each package iterate over its dependencies
+		# 		
+		for pkg_name in pkg.pkg_dependencies:
+			dep_pkg = cfg.get_target_pkg(pkg_name)
+			node_dep_pkg = "package_" + dep_pkg.name
+
+			net.add_edge(pydot.Edge(nodename, node_dep_pkg))
+
+
+	# mention we are making the graph so it doesn't look like the program has hung
+	#
+	print("creating png file")
+	
+	# write it out a a png file
+	#
+	graphname = args.graphname + ".png"
+	net.write_png(graphname)
+	
+	# write it out as a dot file for consumption elsewhere
+	#
+	if args.dot:
+		print("creating dot file")
+		dotname = args.graphname + ".dot"
+		net.write_dot(dotname)
+	
+	
+do_full_pkg_dep_graph.parser = main_subparsers.add_parser('full-graph')
+do_full_pkg_dep_graph.parser.add_argument('--dot', action='store_true', help="also emit a DOT file containing the dependency graph")
+do_full_pkg_dep_graph.parser.add_argument('graphname', type=str, help="path and name of output graph without extension... (so ./mygraph not ./mygraph.png)") 
+
+
+
+
+
+
+
+
+
+# recursively get package dependencies... tries to check for loops
+#
+def recursive_get_deps_in_dict(cfg, mypkgs, pname):
+	# add it to the dictionary
+	#
+	mypkgs[pname]=pname
+
+	mydeppkg = cfg.get_target_pkg(pname)
+
+	# get the list of dependencies for the package
+	#
+	for pkg_name in mydeppkg.pkg_dependencies:
+		dep_pkg = cfg.get_target_pkg(pkg_name)
+
+		mypkgs[dep_pkg.name] = dep_pkg.name
+		recursive_get_deps_in_dict(cfg, mypkgs, dep_pkg.name)
+
+
+def do_pkg_dep_graph(args):
+	cfg = xbstrap.base.config_for_dir()
+	plan = xbstrap.base.Plan(cfg)
+	
+	# check that the package exists...
+	# only values() returned from opaque classes in xbstrap base so no dict.keys() lookup...
+	
+	exists=False	
+	for apkg in cfg.all_pkgs():
+		if apkg.name == args.pkgname:
+			exists=True	
+	
+	if not exists:
+		print("package name not in project")
+		return
+
+	mypkgs = dict()
+
+	# make a list of packages to use
+	#
+	recursive_get_deps_in_dict(cfg, mypkgs, args.pkgname)	
+	
+	# directed graph....
+	#
+	net = pydot.Dot(graph_type='digraph')
+	
+	
+	# make all the nodes... append package_ to each node name
+	#
+	for pkg in mypkgs:
+		nodename = "package_" + pkg	
+
+		node = pydot.Node(nodename, label=pkg, group="package", shape="ellipse", style="filled", fillcolor="yellow")		
+		net.add_node(node)
+
+	
+	# make edges...
+	#	
+	for pkg in mypkgs:
+	
+		nodename = "package_" + pkg
+
+		the_pkg = cfg.get_target_pkg(pkg)	
+		# for each package iterate over its dependencies
+		# 		
+		for pkg_name in the_pkg.pkg_dependencies:
+			dep_pkg = cfg.get_target_pkg(pkg_name)
+			node_dep_pkg = "package_" + dep_pkg.name
+
+			net.add_edge(pydot.Edge(nodename, node_dep_pkg))
+
+
+	# mention we are making the graph so it doesn't look like the program has hung
+	#
+	print("creating png file")
+	
+	# write it out a a png file
+	#
+	graphname = args.graphname + ".png"
+	net.write_png(graphname)
+	
+	# write it out as a dot file for consumption elsewhere
+	#
+	if args.dot:
+		print("creating dot file")
+		dotname = args.graphname + ".dot"
+		net.write_dot(dotname)
+	
+	
+do_pkg_dep_graph.parser = main_subparsers.add_parser('pkg-graph')
+do_pkg_dep_graph.parser.add_argument('--dot', action='store_true', help="also emit a DOT file containing the dependency graph")
+do_pkg_dep_graph.parser.add_argument('pkgname', type=str, help="the package to emit dependency graph for") 
+do_pkg_dep_graph.parser.add_argument('graphname', type=str, help="path and name of output graph without extension... (so ./mygraph not ./mygraph.png)") 
+
+
+
+
+
+def do_show_unstable(args):
+	cfg = xbstrap.base.config_for_dir()
+	plan = xbstrap.base.Plan(cfg)
+	
+	for pkg in cfg.all_pkgs():
+		if not (pkg.stability_level == 'stable'):
+			print(pkg.name)
+		
+do_show_unstable.parser = main_subparsers.add_parser('show-unstable')
+
+
+
+
+args = main_parser.parse_args()
+
+colorama.init()
+
+try:
+	if args.command == 'full-graph':
+		do_full_pkg_dep_graph(args)
+	elif args.command == 'pkg-graph':
+		do_pkg_dep_graph(args)
+	elif args.command == 'show-unstable':
+		do_show_unstable(args)	
+	else:
+		assert not "Unexpected command"
+except (xbstrap.base.ExecutionFailureException, xbstrap.base.PlanFailureException) as e:
+	print('{}xbinfo{}: {}{}{}'.format(colorama.Style.BRIGHT, colorama.Style.RESET_ALL,
+			colorama.Fore.RED, e, colorama.Style.RESET_ALL))
+	sys.exit(1)
+except KeyboardInterrupt as e:
+	sys.exit(1)
+	
+	
